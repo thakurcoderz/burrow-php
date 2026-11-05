@@ -41,6 +41,8 @@ jobs:
       ARCH: ${{ matrix.target.arch }}
       PLATFORM: ${{ matrix.target.os }}-${{ matrix.target.arch }}
       GH_TOKEN: ${{ github.token }}
+      # static-php-cli reads this for GitHub API calls (avoids 403 rate limits).
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
