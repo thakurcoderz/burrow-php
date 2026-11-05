@@ -1,0 +1,59 @@
+name: Build Valkey (macOS)
+
+# Valkey publishes Linux builds but none for macOS, so Burrow builds it here,
+# the same version as on Linux, on an Apple Silicon runner. TLS is off so the
+# binaries need nothing beyond the system libraries (no Homebrew). Published
+# to the `valkey` release with a .sha256 file; Burrow pins that checksum.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Valkey version"
+        default: "9.1.3"
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      V: ${{ github.event.inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source
+        run: |
+          curl -fsSL -o src.tgz "https://github.com/valkey-io/valkey/archive/refs/tags/$V.tar.gz"
+          tar xzf src.tgz
+      - name: Build
+        run: make -C "valkey-$V" -j"$(sysctl -n hw.ncpu)" BUILD_TLS=no USE_SYSTEMD=no
+      - name: Package (same layout as Valkey's Linux tarballs)
+        run: |
+          d="valkey-$V-macos-aarch64"
+          mkdir -p "$d/bin" "$d/share"
+          for b in valkey-server valkey-cli valkey-benchmark valkey-check-aof valkey-check-rdb; do
+            cp "valkey-$V/src/$b" "$d/bin/"
+          done
+          cp "valkey-$V/COPYING" "$d/share/LICENSE" 2>/dev/null || cp "valkey-$V/LICENSE"* "$d/share/LICENSE"
+          for b in "$d"/bin/*; do
+            # Only system libraries: nothing from Homebrew or the build tree.
+            if otool -L "$b" | tail -n +2 | grep -vE '^\s*(/usr/lib/|/System/Library/)'; then
+              echo "::error::$b links a non-system library"; exit 1
+            fi
+          done
+          tar -czf "$d.tar.gz" "$d"
+          shasum -a 256 "$d.tar.gz" | tee "$d.tar.gz.sha256"
+      - name: Check
+        run: |
+          d="valkey-$V-macos-aarch64"
+          "$d/bin/valkey-server" --version
+          "$d/bin/valkey-server" --port 26399 --save "" --daemonize yes --pidfile "$PWD/v.pid"
+          sleep 1
+          test "$("$d/bin/valkey-cli" -p 26399 ping)" = PONG
+          "$d/bin/valkey-cli" -p 26399 shutdown nosave || true
+      - name: Publish
+        run: |
+          gh release view valkey >/dev/null 2>&1 || gh release create valkey --title "Valkey (macOS)" \
+            --notes "Valkey built from source for macOS (Apple Silicon); Valkey has no official macOS builds. TLS off, system libraries only."
+          gh release upload valkey "valkey-$V-macos-aarch64.tar.gz" "valkey-$V-macos-aarch64.tar.gz.sha256" --clobber

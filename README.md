@@ -15,3 +15,10 @@ by default and checks every file against `index.json`.
 
 The workflow runs weekly to pick up new PHP patch releases, and can be run by
 hand from the Actions tab (optionally for some versions, or forcing a rebuild).
+
+## Valkey for macOS
+
+Valkey has no official macOS builds, so the **Build Valkey (macOS)** workflow
+compiles it from source (TLS off, system libraries only, checked with `otool`
+and a start + `PING`) and publishes it to the [`valkey` release](../../releases/tag/valkey).
+Burrow pins the SHA-256 in its service catalog.
