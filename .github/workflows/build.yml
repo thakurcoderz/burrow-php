@@ -1,0 +1,116 @@
+name: Build PHP
+
+# Builds static PHP (CLI + FPM) with static-php-cli for each supported minor
+# version, on x86_64 and aarch64, using the newest patch release from
+# php.net, and publishes the tarballs to the rolling `builds` release with
+# an index.json (name, size, sha256) that Burrow reads.
+#
+# Runs weekly (new PHP patches), and by hand: Actions → Build PHP → Run.
+on:
+  schedule:
+    - cron: "23 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      minors:
+        description: "Minor versions (JSON list)"
+        default: '["8.1","8.2","8.3","8.4","8.5"]'
+      force:
+        description: "Rebuild even if that patch is already published"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-php
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        minor: ${{ fromJSON(github.event.inputs.minors || '["8.1","8.2","8.3","8.4","8.5"]') }}
+        target:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+    runs-on: ${{ matrix.target.runner }}
+    env:
+      ARCH: ${{ matrix.target.arch }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest patch release of PHP ${{ matrix.minor }}
+        id: v
+        run: |
+          v=$(curl -fsSL "https://www.php.net/releases/?json&version=${{ matrix.minor }}" | jq -r .version)
+          [[ "$v" == ${{ matrix.minor }}.* ]] || { echo "::error::no release for ${{ matrix.minor }}: $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          cli="php-$v-cli-linux-$ARCH.tar.gz"
+          if [ "${{ github.event.inputs.force }}" != "true" ] && gh release view builds --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$cli"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$cli is already published"
+          fi
+
+      - name: Get static-php-cli
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          curl -fsSL -o spc.tgz "https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-linux-$ARCH.tar.gz"
+          tar xzf spc.tgz && chmod +x spc && ./spc --version
+
+      - name: Download sources
+        if: steps.v.outputs.skip != 'true'
+        run: ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt)" --prefer-pre-built --retry=3
+
+      - name: Build
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          ./spc doctor --auto-fix
+          ./spc build "$(cat extensions.txt)" --build-cli --build-fpm
+
+      - name: Check
+        if: steps.v.outputs.skip != 'true'
+        run: scripts/check.sh buildroot/bin
+
+      - name: Package
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          v=${{ steps.v.outputs.version }}
+          mkdir out
+          tar -C buildroot/bin -czf "out/php-$v-cli-linux-$ARCH.tar.gz" php
+          tar -C buildroot/bin -czf "out/php-$v-fpm-linux-$ARCH.tar.gz" php-fpm
+          (cd out && for f in *.tar.gz; do sha256sum "$f" > "$f.sha256"; done; cat *.sha256)
+
+      - uses: actions/upload-artifact@v4
+        if: steps.v.outputs.skip != 'true'
+        with:
+          name: php-${{ steps.v.outputs.version }}-${{ matrix.target.arch }}
+          path: out/*
+
+  publish:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: new
+          merge-multiple: true
+      - name: Upload new builds
+        run: |
+          gh release view builds >/dev/null 2>&1 || gh release create builds --title "PHP builds" \
+            --notes "Static PHP (CLI + FPM) for Burrow. index.json lists every file with its SHA-256."
+          if ls new/*.tar.gz >/dev/null 2>&1; then gh release upload builds new/* --clobber; fi
+      - name: Rebuild index.json
+        run: |
+          mkdir sums
+          gh release download builds -p "*.sha256" -D sums
+          gh release view builds --json assets > assets.json
+          python3 scripts/index.py sums assets.json > index.json
+          echo "$(jq length index.json) files"
+          gh release upload builds index.json --clobber
