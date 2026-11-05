@@ -74,7 +74,12 @@ jobs:
 
       - name: Download sources
         if: steps.v.outputs.skip != 'true'
-        run: ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt)" --prefer-pre-built --retry=3
+        # macOS builds every library from source: the prebuilt SQLite lacks
+        # SQLITE_ENABLE_COLUMN_METADATA, which the sqlite3 extension needs.
+        run: |
+          prebuilt="--prefer-pre-built"
+          [ "${{ matrix.target.os }}" = macos ] && prebuilt=""
+          ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt)" $prebuilt --retry=3
 
       - name: Build
         if: steps.v.outputs.skip != 'true'
