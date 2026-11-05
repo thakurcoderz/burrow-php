@@ -14,6 +14,9 @@ on:
       minors:
         description: "Minor versions (JSON list)"
         default: '["8.1","8.2","8.3","8.4","8.5"]'
+      os:
+        description: "Platforms to build (linux, macos or both)"
+        default: "linux,macos"
       force:
         description: "Rebuild even if that patch is already published"
         type: boolean
@@ -53,6 +56,11 @@ jobs:
           [[ "$v" == ${{ matrix.minor }}.* ]] || { echo "::error::no release for ${{ matrix.minor }}: $v"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           cli="php-$v-cli-$PLATFORM.tar.gz"
+          if [[ ",${{ github.event.inputs.os || 'linux,macos' }}," != *",${{ matrix.target.os }},"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "not building ${{ matrix.target.os }} this run"
+            exit 0
+          fi
           if [ "${{ github.event.inputs.force }}" != "true" ] && gh release view builds --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$cli"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "$cli is already published"
