@@ -1,7 +1,7 @@
 name: Build PHP
 
 # Builds static PHP (CLI + FPM) with static-php-cli for each supported minor
-# version, on x86_64 and aarch64, using the newest patch release from
+# version, on Linux x86_64 / aarch64 and macOS aarch64, using the newest patch release from
 # php.net, and publishes the tarballs to the rolling `builds` release with
 # an index.json (name, size, sha256) that Burrow reads.
 #
@@ -33,11 +33,13 @@ jobs:
       matrix:
         minor: ${{ fromJSON(github.event.inputs.minors || '["8.1","8.2","8.3","8.4","8.5"]') }}
         target:
-          - { runner: ubuntu-latest, arch: x86_64 }
-          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+          - { runner: ubuntu-latest, os: linux, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, os: linux, arch: aarch64 }
+          - { runner: macos-latest, os: macos, arch: aarch64 }
     runs-on: ${{ matrix.target.runner }}
     env:
       ARCH: ${{ matrix.target.arch }}
+      PLATFORM: ${{ matrix.target.os }}-${{ matrix.target.arch }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +50,7 @@ jobs:
           v=$(curl -fsSL "https://www.php.net/releases/?json&version=${{ matrix.minor }}" | jq -r .version)
           [[ "$v" == ${{ matrix.minor }}.* ]] || { echo "::error::no release for ${{ matrix.minor }}: $v"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          cli="php-$v-cli-linux-$ARCH.tar.gz"
+          cli="php-$v-cli-$PLATFORM.tar.gz"
           if [ "${{ github.event.inputs.force }}" != "true" ] && gh release view builds --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$cli"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "$cli is already published"
@@ -57,7 +59,7 @@ jobs:
       - name: Get static-php-cli
         if: steps.v.outputs.skip != 'true'
         run: |
-          curl -fsSL -o spc.tgz "https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-linux-$ARCH.tar.gz"
+          curl -fsSL -o spc.tgz "https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-$PLATFORM.tar.gz"
           tar xzf spc.tgz && chmod +x spc && ./spc --version
 
       - name: Download sources
@@ -79,14 +81,14 @@ jobs:
         run: |
           v=${{ steps.v.outputs.version }}
           mkdir out
-          tar -C buildroot/bin -czf "out/php-$v-cli-linux-$ARCH.tar.gz" php
-          tar -C buildroot/bin -czf "out/php-$v-fpm-linux-$ARCH.tar.gz" php-fpm
-          (cd out && for f in *.tar.gz; do sha256sum "$f" > "$f.sha256"; done; cat *.sha256)
+          tar -C buildroot/bin -czf "out/php-$v-cli-$PLATFORM.tar.gz" php
+          tar -C buildroot/bin -czf "out/php-$v-fpm-$PLATFORM.tar.gz" php-fpm
+          (cd out && for f in *.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done; cat *.sha256)
 
       - uses: actions/upload-artifact@v4
         if: steps.v.outputs.skip != 'true'
         with:
-          name: php-${{ steps.v.outputs.version }}-${{ matrix.target.arch }}
+          name: php-${{ steps.v.outputs.version }}-${{ matrix.target.os }}-${{ matrix.target.arch }}
           path: out/*
 
   publish:
