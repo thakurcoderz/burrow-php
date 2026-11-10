@@ -36,8 +36,9 @@ jobs:
       matrix:
         minor: ${{ fromJSON(github.event.inputs.minors || '["8.1","8.2","8.3","8.4","8.5"]') }}
         target:
-          - { runner: ubuntu-latest, os: linux, arch: x86_64 }
-          - { runner: ubuntu-24.04-arm, os: linux, arch: aarch64 }
+          # Ubuntu 22.04 (glibc 2.35): the oldest system Burrow supports.
+          - { runner: ubuntu-22.04, os: linux, arch: x86_64 }
+          - { runner: ubuntu-22.04-arm, os: linux, arch: aarch64 }
           - { runner: macos-latest, os: macos, arch: aarch64 }
     runs-on: ${{ matrix.target.runner }}
     env:
@@ -46,6 +47,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       # static-php-cli reads this for GitHub API calls (avoids 403 rate limits).
       GITHUB_TOKEN: ${{ github.token }}
+      # Linux: link glibc (not fully static musl) so PHP can load xdebug.so.
+      SPC_LIBC: ${{ matrix.target.os == 'linux' && 'glibc' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,13 +82,13 @@ jobs:
         run: |
           prebuilt="--prefer-pre-built"
           [ "${{ matrix.target.os }}" = macos ] && prebuilt=""
-          ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt)" $prebuilt --retry=3
+          ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt),xdebug" $prebuilt --retry=3
 
       - name: Build
         if: steps.v.outputs.skip != 'true'
         run: |
           ./spc doctor --auto-fix
-          ./spc build "$(cat extensions.txt)" --build-cli --build-fpm
+          ./spc build "$(cat extensions.txt)" --build-cli --build-fpm --build-shared=xdebug
 
       - name: Check
         if: steps.v.outputs.skip != 'true'
@@ -98,6 +101,7 @@ jobs:
           mkdir out
           tar -C buildroot/bin -czf "out/php-$v-cli-$PLATFORM.tar.gz" php
           tar -C buildroot/bin -czf "out/php-$v-fpm-$PLATFORM.tar.gz" php-fpm
+          tar -C buildroot/modules -czf "out/php-$v-xdebug-$PLATFORM.tar.gz" xdebug.so
           (cd out && for f in *.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done; cat *.sha256)
 
       - uses: actions/upload-artifact@v4

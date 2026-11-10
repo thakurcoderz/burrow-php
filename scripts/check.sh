@@ -19,4 +19,7 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 "$php" -r 'echo (new NumberFormatter("en_US", NumberFormatter::DECIMAL))->format(1234.5), PHP_EOL;' | grep -qx '1,234.5'
 "$dir/php-fpm" -v
+# Xdebug (shared) loads into this PHP.
+so="$dir/../modules/xdebug.so"
+"$php" -n -d "zend_extension=$(cd "$(dirname "$so")" && pwd)/xdebug.so" -r 'exit(phpversion("xdebug") ? 0 : 1);' || { echo "xdebug.so does not load"; exit 1; }
 echo "ok: $("$php" -r 'echo PHP_VERSION;') with $(wc -l <<< "$loaded") modules"
