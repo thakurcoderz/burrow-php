@@ -49,6 +49,9 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       # Linux: link glibc (not fully static musl) so PHP can load xdebug.so.
       SPC_LIBC: ${{ matrix.target.os == 'linux' && 'glibc' || '' }}
+      # Xdebug 3.5 needs PHP 8.2+; 8.1 (end of life) builds without it.
+      XDEBUG_EXT: ${{ matrix.minor != '8.1' && ',xdebug' || '' }}
+      XDEBUG_SHARED: ${{ matrix.minor != '8.1' && '--build-shared=xdebug' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -82,13 +85,13 @@ jobs:
         run: |
           prebuilt="--prefer-pre-built"
           [ "${{ matrix.target.os }}" = macos ] && prebuilt=""
-          ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt),xdebug" $prebuilt --retry=3
+          ./spc download --with-php=${{ steps.v.outputs.version }} --for-extensions="$(cat extensions.txt)$XDEBUG_EXT" $prebuilt --retry=3
 
       - name: Build
         if: steps.v.outputs.skip != 'true'
         run: |
           ./spc doctor --auto-fix
-          ./spc build "$(cat extensions.txt)" --build-cli --build-fpm --build-shared=xdebug
+          ./spc build "$(cat extensions.txt)" --build-cli --build-fpm $XDEBUG_SHARED
 
       - name: Check
         if: steps.v.outputs.skip != 'true'
@@ -101,7 +104,9 @@ jobs:
           mkdir out
           tar -C buildroot/bin -czf "out/php-$v-cli-$PLATFORM.tar.gz" php
           tar -C buildroot/bin -czf "out/php-$v-fpm-$PLATFORM.tar.gz" php-fpm
-          tar -C buildroot/modules -czf "out/php-$v-xdebug-$PLATFORM.tar.gz" xdebug.so
+          if [ -f buildroot/modules/xdebug.so ]; then
+            tar -C buildroot/modules -czf "out/php-$v-xdebug-$PLATFORM.tar.gz" xdebug.so
+          fi
           (cd out && for f in *.tar.gz; do shasum -a 256 "$f" > "$f.sha256"; done; cat *.sha256)
 
       - uses: actions/upload-artifact@v4
