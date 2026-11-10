@@ -21,5 +21,8 @@ fi
 "$dir/php-fpm" -v
 # Xdebug (shared) loads into this PHP.
 so="$dir/../modules/xdebug.so"
-[ -f "$so" ] && "$php" -n -d "zend_extension=$(cd "$(dirname "$so")" && pwd)/xdebug.so" -r 'exit(phpversion("xdebug") ? 0 : 1);' || { echo "xdebug.so does not load"; exit 1; }
+if [ -f "$so" ]; then
+  "$php" -n -d "zend_extension=$(cd "$(dirname "$so")" && pwd)/xdebug.so" -r 'exit(phpversion("xdebug") ? 0 : 1);' || { echo "xdebug.so does not load"; exit 1; }
+  echo "xdebug: $("$php" -n -d "zend_extension=$(cd "$(dirname "$so")" && pwd)/xdebug.so" -r 'echo phpversion("xdebug");')"
+fi
 echo "ok: $("$php" -r 'echo PHP_VERSION;') with $(wc -l <<< "$loaded") modules"
